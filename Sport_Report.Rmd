@@ -1,0 +1,206 @@
+---
+title: "Determining the Most Challenging Sport"
+output: html_document
+date: "2024-06-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(ggforce)
+library(readxl)
+library(extrafont)
+library(factoextra)
+
+```
+
+## Data Import
+
+```{r}
+
+# The data is available at https://data.world/makeovermonday/2018w19-toughest-sport-by-skill.
+data <- read_excel("/Users/ryanlee/Desktop/R/R Projects/Sport/dataset/sport.xlsx")
+
+# replaces all spaces in the column names of the data dataframe with underscores
+colnames(data) = gsub(" ", "_", colnames(data))
+
+```
+
+## Data Transformation/Manipulation
+
+```{r}
+
+# calculate the Median of each column
+data |> summarise_each(funs(median))
+
+# reshapes the data dataframe from wide to long format, gathering columns from Endurance to Analytical_Aptitude into two new columns named skill and value
+df <- data |> 
+  gather(skill, value, Endurance:Analytical_Aptitude)
+
+# extracts the unique values from the Sport column of the df dataframe and stores them in the levels variable
+levels = unique(df$Sport)
+
+# converts the Sport column in the df dataframe into a factor, using the unique values stored in the levels variable to define the factor levels
+df <- df |> 
+  mutate(Sport = factor(Sport, levels = levels))
+
+```
+
+## Principle Component Analysis
+
+```{r}
+
+# removes the Total and Rank columns from the data dataframe
+# removes any existing row names, and then sets the Sport column as the new row names
+df2 = data %>%
+  select(-c(Total, Rank)) %>% 
+  remove_rownames %>% 
+  column_to_rownames(var = "Sport")
+
+# performs Principal Component Analysis (PCA) and scales the data before the analysis
+res.pca <- prcomp(df2, scale = TRUE)
+
+# visualizes the eigenvalues from the PCA, showing the amount of variance explained by each principal component
+fviz_eig(res.pca)
+
+# creates a visualization of the variables in the PCA
+fviz_pca_var(res.pca,
+             col.var = "contrib", 
+             gradient.cols = c("#1E90FF", "#32CD32", "#FF4500"),
+             repel = TRUE     
+             )
+
+```
+
+## Skillset Overview
+
+#### Examining the distribution of required skills shows that the majority of sports emphasize endurance significantly more than analytical ability.
+
+```{r}
+
+my_theme <- function(base_size = 12, base_family = "Impact") {
+  theme_minimal(base_size = base_size, base_family = base_family) +
+    theme_update(
+      axis.title.y = element_blank(), 
+      axis.title.x = element_blank(),
+      plot.title = element_text(face = "bold", size = 16),
+      axis.text = element_blank(),
+      plot.background = element_rect(fill = 'ghostwhite', color='white'),
+      panel.grid = element_blank(), 
+      legend.position = "none", 
+      legend.title = element_blank()
+    )
+}
+
+pal = c('#00CED1', '#4682B4', '#5F9EA0', '#6495ED', '#7B68EE',
+        '#6A5ACD', '#483D8B', '#20B2AA', '#66CDAA', '#8FBC8F')
+
+df_skill = df |> 
+  mutate(x = rep(1, 600), y = value-rep(1,600))
+
+df_skill %>%
+  ggplot() + 
+  geom_circle(aes(x0 = x, y0 = y, r = value, color = skill, alpha = 0.1)) + 
+  coord_equal() + 
+  facet_wrap(~skill, nrow = 2) +
+  theme_void() +
+  my_theme() +
+  theme(text = element_text(size = 9,face="bold"), legend.position = "none") +
+  labs(title = "Skill Levels Required for Various Sports") +
+  scale_color_manual(values = pal, guide = FALSE)
+
+```
+## Lowest/Highest Skill Requirement
+
+#### Narrowing down to the sports that require the highest or lowest levels of these skills, auto racing demands substantial analytical aptitude and nerve, while baseball and softball necessitate excellent hand-eye coordination.
+
+```{r}
+
+# identify and label the sports with the minimum and maximum skill values for each skill, ensuring all values are unique, and filters to keep only those rows where a sport is labeled as the easiest or toughest for each skill
+df_maxmin <- df_skill |> 
+  ungroup() |> 
+  mutate(skill = gsub("_", " ", skill)) |> 
+  mutate(value = value + runif(600)/1000000) |> 
+  ungroup() |> 
+  group_by(skill) |> 
+  mutate(easiest = ifelse(value == min(value), Sport, ""),
+         toughest = ifelse(value == max(value), Sport, "")) |> 
+  filter(!((easiest == "") & (toughest == "")))
+
+# creates a faceted ggplot visualization, displaying circles to represent skill values by sport and adding labels for the sports, with customized colors and themes, to highlight the toughest and easiest sports for each skill
+df_maxmin |> 
+  ggplot() +
+  geom_circle(aes(x0 = x, y0 = y, r = value, color = skill, alpha = 0.1)) +
+  coord_equal() +
+  geom_text(aes(x = x, y = value*2, label = Sport), size = 3) +
+  facet_wrap(~skill, nrow = 2) +
+  my_theme() +
+  labs(title = "Most Challenging and Easiest Sports by Skill") +
+  scale_color_manual(values = pal)
+
+```
+
+## Skill Requirement
+
+####  Sports are ranked from the most demanding (boxing) to the most leisurely (billiards and fishing) based on total scores across 10 skills. While demanding sports like boxing and ice hockey require high levels in multiple skills, other sports might need extremely high proficiency in specific skills, making them challenging in their own way.
+
+```{r}
+
+# creates a faceted circular bar plot for each sport, displaying skill values with customized colors and a minimalistic theme, while wrapping long sport names and adding a title for clarity
+df |> 
+  ggplot(aes(skill, value, fill = skill)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = pal) +
+  coord_polar(theta = "y") +
+  facet_wrap(~Sport, labeller = labeller(Sport = label_wrap_gen(18)), ncol = 12) +
+  theme_void() +
+  my_theme() +
+  theme(text = element_text(size = 6, face = "bold")) +
+  labs(title = "Which Sport is the Most Challenging?")
+
+```
+
+```{r}
+
+## Variance in Skills
+df |> 
+  group_by(Sport) |> 
+  summarize(var = var(value)) |> 
+  arrange(var)
+
+```
+
+#### Certain sports prioritize specific skills; for example, sprints place the highest importance on speed, while weightlifting primarily requires power and strength. Additionally, there are sports that, while not as high-impact as boxing, still demand a well-rounded set of skills.
+
+```{r}
+
+#creates a faceted circular bar plot for the sports "Fishing," "Martial Arts," and "Water Skiing," displaying skill values with customized colors, adding labels for skills with values less than 9, and applying a minimalistic theme with a bold title
+df |> 
+  mutate(skill = gsub("_", " ", skill)) |> 
+  filter(Sport %in% c("Fishing", "Martial Arts", "Water Skiing")) |> 
+  ggplot(aes(skill, value,, fill = skill)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = pal) +
+  geom_label(aes(y = 0, label = ifelse(value < 9, skill, ""), hjust = 1), size = 3.5, label.padding = unit(0.1, "lines"), alpha = 0.76) +
+  coord_polar(theta = "y") +
+  facet_wrap(~Sport, labeller = labeller(Sport = label_wrap_gen(18))) +
+  theme_void() +
+  my_theme() +
+  theme(text = element_text(size = 12, face = "bold")) +
+  labs(title = "Sports Requiring Comprehensive Skill Sets?")
+
+# creates a faceted circular bar plot for the sports "Auto Racing," "Weight-Lifting," and "Track and Field: Sprints," displaying skill values with customized colors, adding labels for skills with values greater than 9, and applying a minimalistic theme with a bold title
+df |> 
+  filter(Sport %in% c("Auto Racing", "Weight-Lifting", "Track and Field: Sprints")) |> 
+  ggplot(aes(skill, value, fill = skill)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = pal) +
+  geom_label(aes(y = 0, label = ifelse(value > 9, skill, ""), hjust = 1), size = 3.5, label.padding = unit(0.1, "lines"), alpha = 0.76) +
+  coord_polar(theta = "y") +
+  facet_wrap(~Sport, labeller = labeller(Sport = label_wrap_gen(18))) +
+  theme_void() + my_theme() +
+  theme(text = element_text(size = 12,face="bold")) +
+  labs(title = "Sports Focused on Specialized Skills")
+
+```
